@@ -1,31 +1,36 @@
+# app.py - allow ?u= or ?username=
 from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return jsonify({"status": "online"})
+def check_with_roblox(name):
+    url = "https://auth.roblox.com/v1/usernames/validate"
+    params = {
+        "request.username": name,
+        "request.birthday": "2000-01-01"
+    }
+    r = requests.get(url, params=params, timeout=4)
+    data = r.json()
+    return data.get("code") == 0, data
 
-@app.route("/check")
-def check_username():
-    username = request.args.get("u")
-    if not username:
-        return jsonify({"error": "No username provided"}), 400
+@app.route("/check", methods=["GET","POST"])
+def check():
+    # Accept both ?u= and ?username= and JSON POST {"usernames": []} optionally
+    name = request.args.get("u") or request.args.get("username")
+    if request.method == "POST" and not name:
+        body = request.get_json(silent=True) or {}
+        names = body.get("usernames")
+        if isinstance(names, list) and names:
+            out = {}
+            for n in names[:50]:
+                ok, raw = check_with_roblox(n)
+                out[n] = {"available": ok, "raw": raw}
+            return jsonify(out)
+        return jsonify({"error":"missing usernames"}), 400
 
-    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={username}&request.birthday=2000-01-01"
+    if not name:
+        return jsonify({"error":"missing username parameter (use u or username)"}), 400
 
-    try:
-        response = requests.get(url, timeout=3)
-        data = response.json()
-
-        return jsonify({
-            "username": username,
-            "available": (data.get("code") == 0),
-            "roblox_response": data
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    ok, raw = check_with_roblox(name)
+    return jsonify({"username": name, "available": ok, "raw": raw})
